@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "rubocop": {
+      "type": "local",
+      "command": ["bundle", "exec", "rubocop", "--mcp"],
+      "enabled": true
+    }
+  }
+}

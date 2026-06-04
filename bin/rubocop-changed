@@ -1,0 +1,17 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Installed by the railsdx gem. Invoked from agent post-turn hooks
+# (e.g. Claude Code's Stop hook in .claude/settings.json) and safe to run
+# by hand or from CI.
+#
+# Delegates to the gem's bundled executable so the lint logic stays in one
+# place (lib/railsdx/checks/rubocop_changed.rb) and can evolve without
+# regenerating this shim.
+#
+# Exit codes:
+#   0 - nothing to lint, or RuboCop clean
+#   2 - RuboCop reported offenses (stderr carries the report so agent
+#       hooks can surface it back to the model)
+
+exec("bundle", "exec", "railsdx-check", "rubocop-changed", *ARGV)

@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Stand up a throwaway Rails app, wire in this gem from a local path,
+# run the install generator, and print a manual checklist for validating
+# the generated MCP configs against Claude Code, Codex, and OpenCode.
+#
+# Usage:
+#   bin/smoke-test-mcp                  # auto-pick /tmp/railsdx-smoke-<epoch>
+#   bin/smoke-test-mcp /path/to/dir     # use a specific scratch dir
+#
+# The script is intentionally non-destructive: it never touches your
+# ~/.codex/config.toml. It only writes inside the scratch dir.
+
+set -euo pipefail
+
+GEM_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRATCH_DIR="${1:-/tmp/railsdx-smoke-$(date +%s)}"
+
+bold()   { printf "\033[1m%s\033[0m\n" "$*"; }
+green()  { printf "\033[32m%s\033[0m\n" "$*"; }
+yellow() { printf "\033[33m%s\033[0m\n" "$*"; }
+red()    { printf "\033[31m%s\033[0m\n" "$*" >&2; }
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    red "Missing required command: $1"
+    red "  Hint: $2"
+    exit 1
+  }
+}
+
+bold "==> Preflight"
+require_cmd rails  "gem install rails (or activate a Ruby with rails available)"
+require_cmd bundle "ships with Ruby; check your version manager activation"
+
+if [[ -e "$SCRATCH_DIR" ]]; then
+  red "Scratch dir already exists: $SCRATCH_DIR"
+  red "Pick a fresh path or remove it first."
+  exit 1
+fi
+
+bold "==> Creating fresh Rails app at $SCRATCH_DIR"
+rails new "$SCRATCH_DIR" --minimal --skip-bundle --skip-git --quiet
+
+cd "$SCRATCH_DIR"
+
+bold "==> Patching Gemfile to use local railsdx gem"
+cat >> Gemfile <<RUBY
+
+# Added by railsdx/bin/smoke-test-mcp
+gem "railsdx", path: "$GEM_ROOT"
+gem "rubocop", "~> 1.86"
+RUBY
+
+bold "==> bundle install"
+bundle install --quiet
+
+bold "==> bin/rails generate railsdx:install"
+bin/rails generate railsdx:install
+
+echo
+bold "==> Generated artifacts"
+for f in AGENTS.md CLAUDE.md .mcp.json opencode.json .opencode/instructions.md; do
+  if [[ -e "$f" ]]; then
+    green "  ✓ $f"
+  else
+    yellow "  ✗ $f  (missing — generator may have skipped)"
+  fi
+done
+
+echo
+bold "==> Sanity check: bundle exec rubocop --mcp boots"
+# Pipe an empty stdin so the server exits cleanly instead of blocking.
+# Capture exit status; any non-zero indicates the MCP transport isn't wired.
+if : | bundle exec rubocop --mcp >/tmp/railsdx-mcp-boot.log 2>&1; then
+  green "  ✓ rubocop --mcp accepted stdin and exited cleanly"
+else
+  status=$?
+  yellow "  ! rubocop --mcp exited with status $status. Log: /tmp/railsdx-mcp-boot.log"
+  yellow "    (RuboCop's MCP transport may need a real client; this isn't fatal.)"
+fi
+
+cat <<EOF
+
+$(bold "==> Smoke test rig ready")
+
+  Scratch dir : $SCRATCH_DIR
+  Gem path    : $GEM_ROOT
+
+$(bold "==> Manual validation checklist")
+
+  1. Claude Code
+     $ cd "$SCRATCH_DIR" && claude
+     - approve the 'rubocop' MCP server on first launch
+     - run /mcp and confirm rubocop appears as connected
+     - ask: "list tools starting with rubocop_"
+     - smoke lint: "lint app/controllers/application_controller.rb"
+
+  2. Codex
+     - paste the [mcp_servers.rubocop] block printed above into
+       ~/.codex/config.toml (we do NOT auto-edit your home dir)
+     $ cd "$SCRATCH_DIR" && codex
+     - ask it to list available tools; rubocop_inspection should appear
+
+  3. OpenCode
+     $ cd "$SCRATCH_DIR" && opencode
+     - check the tool list for rubocop_inspection / rubocop_autocorrection
+
+$(bold "==> Idempotency check (optional)")
+
+     $ cd "$SCRATCH_DIR" && bin/rails generate railsdx:install
+     - markdown files should be a no-op (marker block unchanged)
+     - JSON files should print 'skip ... rubocop server already configured'
+
+$(bold "==> Cleanup")
+
+     $ rm -rf "$SCRATCH_DIR"
+
+EOF

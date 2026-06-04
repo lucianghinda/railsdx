@@ -1,0 +1,15 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Installed by the railsdx gem. Invoked from PostToolUse hooks
+# (Claude Code .claude/settings.json, Codex .codex/hooks.json) for the
+# Edit / Write / MultiEdit tools. Receives `{"tool_input": {"file_path": "..."}}`
+# on stdin; the gem's CLI parses it and runs `rubocop -A` on that file.
+#
+# Exit codes:
+#   0 - file isn't Ruby, no Gemfile/.rubocop.yml, or RuboCop autocorrected
+#       everything successfully
+#   2 - un-autocorrectable offenses remain (stderr carries the report
+#       so the agent's next tool result surfaces it)
+
+exec("bundle", "exec", "railsdx-check", "rubocop-edited", *ARGV)

@@ -1,0 +1,3 @@
+[mcp_servers.rubocop]
+command = "bundle"
+args = ["exec", "rubocop", "--mcp"]

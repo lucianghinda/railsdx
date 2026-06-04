@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "rubocop": {
+      "command": "bundle",
+      "args": ["exec", "rubocop", "--mcp"]
+    }
+  }
+}

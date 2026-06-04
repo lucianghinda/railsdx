@@ -1,0 +1,54 @@
+<!-- railsdx:start -->
+## RuboCop via MCP
+
+This project exposes RuboCop as an MCP tool. When you write or modify Ruby code, use the RuboCop MCP server — do not shell out to `rubocop` or guess at style.
+
+**Tools available:**
+
+- `rubocop_inspection` — analyze files or inline code; returns structured offenses with file, line, column, cop name, and message.
+- `rubocop_autocorrection` — apply RuboCop's autocorrects to files or inline code.
+
+**Workflow rules:**
+
+1. **Before declaring a task complete**, call `rubocop_inspection` on every file you changed. If there are offenses, fix them before reporting back.
+2. **Prefer `rubocop_autocorrection` over manual edits** when a cop is autocorrectable. Don't hand-rewrite what the tool will rewrite correctly.
+3. **Do not add `# rubocop:disable` comments** to silence offenses. Fix the underlying code. If you genuinely believe a cop is wrong for a specific line, surface the disagreement to the user — don't disable silently.
+4. **Do not modify `.rubocop.yml`** to relax rules without asking. The configuration is the project's contract.
+5. **If RuboCop is unavailable** (MCP server not running, tool returns an error), stop and tell the user — don't proceed as if lint had passed.
+
+**Scope.** These rules apply to any `.rb`, `.rake`, `Gemfile`, `Rakefile`, `*.gemspec`, and ERB files RuboCop is configured to inspect in this project.
+
+### Per-edit autocorrect: `bin/rubocop-edited`
+
+Every time you edit, write, or multi-edit a Ruby file, `bin/rubocop-edited` runs `bundle exec rubocop -A` on just that file. Style fixes happen immediately — your next read of the file will see the corrected version. Only **un-autocorrectable** offenses are surfaced back to you, on stderr, so you can address them before continuing.
+
+It is wired into:
+
+- **Claude Code** — `PostToolUse` hook matching `Edit|Write|MultiEdit` in `.claude/settings.json`. **Blocking** when un-autocorrectable offenses remain.
+- **Codex CLI** — same `PostToolUse` hook in `.codex/hooks.json`. **Blocking**.
+- **OpenCode** — `file.edited` plugin at `.opencode/plugins/rubocop-edited.js`. **Observation only**.
+
+This means: do not hand-fix things like quote style, spacing, or hash formatting after you've edited a file. RuboCop already rewrote them. Move on.
+
+### Safety-net check: `bin/rubocop-changed`
+
+As a final guard, this project ships `bin/rubocop-changed` — a script that runs RuboCop against every `.rb` file modified in the working tree (tracked diffs, staged changes, and untracked files). It exits non-zero with the offense report on stderr when anything is wrong.
+
+It is wired into each agent's turn-end mechanism:
+
+- **Claude Code** — `Stop` hook in `.claude/settings.json`. **Blocking**: a non-zero exit re-enters the turn with the offense report, so you must fix the offenses before stopping.
+- **Codex CLI** — `Stop` hook in `.codex/hooks.json`. **Blocking**: same protocol as Claude Code (exit 2 + stderr → continuation prompt).
+- **OpenCode** — `session.idle` plugin at `.opencode/plugins/rubocop-changed.js`. **Observation only**: the offenses are printed to the console for the developer; the plugin cannot force the agent to fix them. If you're driving OpenCode, still run `bin/rubocop-changed` by hand before declaring done.
+
+If you're working in an agent without any of these integrations, run it manually:
+
+```sh
+bin/rubocop-changed
+```
+
+Treat a non-zero exit as a blocker. Fix the reported offenses (use `bundle exec rubocop -A` for autocorrects), then re-run until it exits clean.
+
+### Verifying the install: `railsdx-check doctor`
+
+Run `bundle exec railsdx-check doctor` to see which agent integrations are wired and whether they point at the expected commands. The doctor is read-only — it never modifies your config. Exit 0 means every expected hook is in place; exit 1 means something is missing or mis-wired. Re-run the install generator to fix gaps.
+<!-- railsdx:end -->

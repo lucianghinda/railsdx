@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "rubydex": {
+      "type": "local",
+      "command": ["${HOME}/.cargo/bin/rubydex_mcp"],
+      "enabled": true
+    }
+  }
+}

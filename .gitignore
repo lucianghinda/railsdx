@@ -1,0 +1,14 @@
+/.bundle/
+/.yardoc
+/_yardoc/
+/coverage/
+/doc/
+/pkg/
+/spec/reports/
+/tmp/
+/test/tmp/
+/.railsdx/
+
+# Bundler binstubs are a personal convenience for running the gem's own
+# checks (`bundle binstubs railsdx`); not part of what the gem ships.
+/bin/railsdx-check
