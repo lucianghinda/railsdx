@@ -11,11 +11,14 @@ Style/Documentation:
 # Test files routinely exceed length/complexity metrics by design (long setup,
 # many assertions per test). Rails generators are structurally similar —
 # many small thor-style public actions plus per-target install methods. The
-# Metrics cops are signal-positive for app code but noise here.
+# checks framework (e.g. Doctor) follows the same per-agent shape: many small
+# inspection methods × three agents. The Metrics cops are signal-positive for
+# app code but noise here.
 Metrics/ClassLength:
   Exclude:
     - "test/**/*"
     - "lib/generators/**/*"
+    - "lib/railsdx/checks/doctor.rb"
 
 Metrics/MethodLength:
   Exclude:

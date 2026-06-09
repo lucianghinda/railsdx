@@ -84,6 +84,6 @@ Treat a non-zero exit as a blocker. Fix the reported offenses (use `bundle exec 
 
 ### Verifying the install: `railsdx-check doctor`
 
-Run `bundle exec railsdx-check doctor` to see which agent integrations are wired and whether they point at the expected commands. The doctor is read-only — it never modifies your config. Exit 0 means every expected hook is in place; exit 1 means something is missing or mis-wired. Re-run the install generator to fix gaps.
+Run `bundle exec railsdx-check doctor` to see which agent integrations are wired and whether they point at the expected commands. The doctor is read-only — it never modifies your config. It checks both **MCP server registrations** (`.mcp.json`, `.codex/config.toml`, `opencode.json`) and **hooks** (`.claude/settings.json`, `.codex/hooks.json`, `.opencode/plugins/`). Exit 0 means every expected wiring is in place; exit 1 means something is missing or mis-wired. Re-run the install generator to fix gaps.
 <% end -%>
 <!-- railsdx:end -->

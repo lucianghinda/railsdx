@@ -2,6 +2,7 @@
 
 require "test_helper"
 require "json"
+require "toml-rb"
 
 module Railsdx
   module Generators
@@ -26,6 +27,12 @@ module Railsdx
           assert_equal %w[exec rubocop --mcp], json.dig("mcpServers", "rubocop", "args")
         end
 
+        assert_file ".codex/config.toml" do |content|
+          toml = TomlRB.parse(content)
+          assert_equal "bundle", toml.dig("mcp_servers", "rubocop", "command")
+          assert_equal %w[exec rubocop --mcp], toml.dig("mcp_servers", "rubocop", "args")
+        end
+
         assert_file ".opencode/instructions.md", /<!-- railsdx:start -->/
         assert_file "opencode.json" do |content|
           json = JSON.parse(content)
@@ -34,10 +41,9 @@ module Railsdx
         end
       end
 
-      def test_prints_codex_snippet
-        output = run_generator
-        assert_match(%r{Codex uses ~/\.codex/config\.toml}, output)
-        assert_match(/\[mcp_servers\.rubocop\]/, output)
+      def test_writes_codex_config_toml_locally
+        run_generator
+        assert_file ".codex/config.toml", /\[mcp_servers\.rubocop\]/
       end
 
       def test_prints_next_steps
@@ -47,10 +53,11 @@ module Railsdx
         assert_match(/railsdx-check doctor/, output)
       end
 
-      def test_prints_codex_trust_step_when_codex_hooks_are_installed
+      def test_prints_codex_trust_step_when_codex_files_are_installed
         output = run_generator
-        assert_match(/REQUIRED for Codex hooks/, output)
+        assert_match(/REQUIRED for Codex \(MCP \+ hooks\)/, output)
         assert_match(%r{codex trust \.codex/}, output)
+        assert_match(/Codex CLI >= 0\.78\.0/, output)
       end
 
       def test_codex_trust_step_omitted_when_codex_skipped
@@ -81,10 +88,11 @@ module Railsdx
         assert_file ".mcp.json"
       end
 
-      def test_skip_codex_omits_codex_snippet
-        output = run_generator ["--skip-codex"]
-        refute_match(/Codex uses/, output)
-        refute_match(/\[mcp_servers\.rubocop\]/, output)
+      def test_skip_codex_omits_codex_files
+        run_generator ["--skip-codex"]
+        assert_no_file ".codex/config.toml"
+        assert_no_file ".codex/hooks.json"
+        assert_file ".mcp.json"
       end
 
       # --- rubydex (opt-in) ------------------------------------------------------
@@ -95,37 +103,82 @@ module Railsdx
           refute_match(/Rubydex/, content)
         end
         refute_match(/Rubydex MCP/, output)
-        refute_match(/claude mcp add --scope user rubydex/, output)
+        assert_file ".mcp.json" do |content|
+          json = JSON.parse(content)
+          assert_nil json.dig("mcpServers", "rubydex")
+        end
+        assert_file ".codex/config.toml" do |content|
+          toml = TomlRB.parse(content)
+          assert_nil toml.dig("mcp_servers", "rubydex")
+        end
+        assert_file "opencode.json" do |content|
+          json = JSON.parse(content)
+          assert_nil json.dig("mcp", "rubydex")
+        end
       end
 
-      def test_with_rubydex_adds_agents_section_and_prints_all_three_snippets
+      def test_with_rubydex_writes_local_mcp_entries_in_all_three_agents
         output = run_generator ["--with-rubydex"]
+
         assert_file "AGENTS.md", /Rubydex \(semantic code intelligence\) via MCP/
         assert_file "AGENTS.md", /\*\*experimental\*\*/
         assert_file "AGENTS.md", /search_declarations/
-        assert_match(/claude mcp add --scope user rubydex/, output)
-        assert_match(/\[mcp_servers\.rubydex\]/, output)
-        assert_match(%r{~/\.config/opencode/opencode\.json}, output)
+
+        assert_file ".mcp.json" do |content|
+          json = JSON.parse(content)
+          assert_equal "${HOME}/.cargo/bin/rubydex_mcp", json.dig("mcpServers", "rubydex", "command")
+        end
+        assert_file ".codex/config.toml" do |content|
+          toml = TomlRB.parse(content)
+          assert_equal "${HOME}/.cargo/bin/rubydex_mcp", toml.dig("mcp_servers", "rubydex", "command")
+        end
+        assert_file "opencode.json" do |content|
+          json = JSON.parse(content)
+          assert_equal "local", json.dig("mcp", "rubydex", "type")
+          assert_equal ["${HOME}/.cargo/bin/rubydex_mcp"], json.dig("mcp", "rubydex", "command")
+        end
+
         assert_match(%r{cargo install --path rust/rubydex-mcp}, output)
         assert_match(/\[EXPERIMENTAL\]/, output)
       end
 
       def test_with_rubydex_respects_skip_claude
-        output = run_generator ["--with-rubydex", "--skip-claude"]
-        refute_match(/claude mcp add --scope user rubydex/, output)
-        assert_match(/\[mcp_servers\.rubydex\]/, output)
+        run_generator ["--with-rubydex", "--skip-claude"]
+        assert_no_file ".mcp.json"
+        assert_file ".codex/config.toml" do |content|
+          toml = TomlRB.parse(content)
+          refute_nil toml.dig("mcp_servers", "rubydex")
+        end
+        assert_file "opencode.json" do |content|
+          json = JSON.parse(content)
+          refute_nil json.dig("mcp", "rubydex")
+        end
       end
 
       def test_with_rubydex_respects_skip_codex
-        output = run_generator ["--with-rubydex", "--skip-codex"]
-        refute_match(/\[mcp_servers\.rubydex\]/, output)
-        assert_match(/claude mcp add --scope user rubydex/, output)
+        run_generator ["--with-rubydex", "--skip-codex"]
+        assert_no_file ".codex/config.toml"
+        assert_file ".mcp.json" do |content|
+          json = JSON.parse(content)
+          refute_nil json.dig("mcpServers", "rubydex")
+        end
+        assert_file "opencode.json" do |content|
+          json = JSON.parse(content)
+          refute_nil json.dig("mcp", "rubydex")
+        end
       end
 
       def test_with_rubydex_respects_skip_opencode
-        output = run_generator ["--with-rubydex", "--skip-opencode"]
-        refute_match(%r{~/\.config/opencode/opencode\.json}, output)
-        assert_match(/claude mcp add --scope user rubydex/, output)
+        run_generator ["--with-rubydex", "--skip-opencode"]
+        assert_no_file "opencode.json"
+        assert_file ".mcp.json" do |content|
+          json = JSON.parse(content)
+          refute_nil json.dig("mcpServers", "rubydex")
+        end
+        assert_file ".codex/config.toml" do |content|
+          toml = TomlRB.parse(content)
+          refute_nil toml.dig("mcp_servers", "rubydex")
+        end
       end
 
       # --- idempotency: marker blocks --------------------------------------------
@@ -406,6 +459,61 @@ module Railsdx
 
         assert_equal "node", json.dig("mcp", "other", "command", 0)
         assert_equal "local", json.dig("mcp", "rubocop", "type")
+      end
+
+      # --- TOML merge for .codex/config.toml -------------------------------------
+
+      def test_codex_config_toml_merge_preserves_unrelated_keys_and_comments
+        FileUtils.mkdir_p(File.join(destination_root, ".codex"))
+        existing = <<~TOML
+          # User preferences for this project
+          model = "gpt-5-codex"
+
+          [mcp_servers.other]
+          command = "node"
+          args = ["server.js"]
+        TOML
+        File.write(File.join(destination_root, ".codex/config.toml"), existing)
+
+        run_generator
+
+        content = File.read(File.join(destination_root, ".codex/config.toml"))
+        assert_match(/# User preferences for this project/, content,
+                     "must preserve user's comments")
+        assert_match(/model = "gpt-5-codex"/, content,
+                     "must preserve unrelated top-level keys")
+        toml = TomlRB.parse(content)
+        assert_equal "node", toml.dig("mcp_servers", "other", "command"),
+                     "must preserve the user's existing mcp_servers"
+        assert_equal "bundle", toml.dig("mcp_servers", "rubocop", "command"),
+                     "must append our rubocop server"
+      end
+
+      def test_codex_config_toml_merge_skips_when_rubocop_already_configured
+        FileUtils.mkdir_p(File.join(destination_root, ".codex"))
+        existing = <<~TOML
+          [mcp_servers.rubocop]
+          command = "custom-rubocop"
+          args = ["--flag"]
+        TOML
+        File.write(File.join(destination_root, ".codex/config.toml"), existing)
+
+        output = run_generator
+        assert_match(%r{skip.*\.codex/config\.toml.*rubocop server already configured}i, output)
+        toml = TomlRB.parse(File.read(File.join(destination_root, ".codex/config.toml")))
+        assert_equal "custom-rubocop", toml.dig("mcp_servers", "rubocop", "command"),
+                     "must not clobber user's existing rubocop config"
+      end
+
+      def test_codex_config_toml_merge_is_idempotent
+        run_generator
+        first = File.read(File.join(destination_root, ".codex/config.toml"))
+
+        run_generator
+        second = File.read(File.join(destination_root, ".codex/config.toml"))
+
+        assert_equal first, second, "re-running must not duplicate the rubocop block"
+        assert_equal 1, second.scan(/\[mcp_servers\.rubocop\]/).size
       end
     end
   end

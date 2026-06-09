@@ -2,13 +2,19 @@
 
 I built `railsdx` because I kept wiring the same handful of files into every Rails project I started using AI coding assistants - and getting it slightly wrong every time. The MCP config in one place, the agent instructions in another, the post-turn lint hook in a third. Three assistants, three protocols, one annoyed me.
 
-This gem ships **one Rails generator** that does the wiring for you. The first thing it teaches your AI assistants is RuboCop:
+This gem ships **one Rails generator** that writes per-agent configuration **entirely inside your project folder**. Nothing is written to your home directory. The first concrete thing it wires is RuboCop:
 
-- It registers the [RuboCop MCP server](https://docs.rubocop.org/rubocop/latest/usage/mcp.html) in Claude Code, Codex, and OpenCode so the agent calls `rubocop_inspection` and `rubocop_autocorrection` as structured tools.
+- It registers the [RuboCop MCP server](https://docs.rubocop.org/rubocop/latest/usage/mcp.html) in Claude Code's `.mcp.json`, Codex CLI's `.codex/config.toml`, and OpenCode's `opencode.json` so the agent calls `rubocop_inspection` and `rubocop_autocorrection` as structured tools.
 - It writes `AGENTS.md` (and the per-assistant stubs that point at it) so the agent knows _when_ to reach for those tools.
 - It drops two RuboCop safety nets - one mid-turn, one post-turn - so even when the agent forgets to call the MCP tools, RuboCop still runs.
 
 That's the v0 surface. The name is broader on purpose - see [Where this is going](#where-this-is-going) below.
+
+## Why local-only
+
+Every file the generator writes lives under `Rails.root`. No `~/.codex/config.toml`, no `~/.claude.json`, no `~/.config/opencode/`. The project's agent configuration travels with the project - if you clone it on a new machine, the wiring is already there. If you delete the project, nothing is left behind.
+
+This was harder than it sounds. Codex CLI shipped project-local `.codex/config.toml` support relatively recently ([openai/codex#8354](https://github.com/openai/codex/pull/8354), in stable since 0.78.0). Before that, MCP server registration in Codex was user-level only and the gem had to print a snippet for you to paste manually. Now it's a real merged file like the other two.
 
 ## Why
 
@@ -21,6 +27,7 @@ Setting that up by hand across three assistants is fiddly and easy to get wrong.
 - Ruby ≥ 3.3
 - Rails ≥ 7.0 (for the generator)
 - `rubocop` ≥ 1.85 in the host app's Gemfile
+- Codex CLI ≥ 0.78.0 if you use Codex (older versions ignore project-local `.codex/config.toml`)
 
 ## Installation
 
@@ -36,11 +43,11 @@ bundle install
 bin/rails generate railsdx:install
 ```
 
-Then restart your AI assistant so it loads the new MCP config. If you use Codex CLI, also read the [Codex trust step](#codex-trust-step-required-for-codex-hooks) below - hooks silently no-op until you do it.
+Then restart your AI assistant so it loads the new MCP config. If you use Codex CLI, also read the [Codex trust step](#codex-trust-step-required) below - both the local config and the hooks silently no-op until you do it.
 
 ## What gets written
 
-The generator writes a small number of files and tries hard not to clobber anything you already have.
+The generator writes a small number of files and tries hard not to clobber anything you already have. Everything below lives under your project root.
 
 | File | Behavior |
 | ---- | -------- |
@@ -48,12 +55,12 @@ The generator writes a small number of files and tries hard not to clobber anyth
 | `CLAUDE.md` | Stub pointing to `AGENTS.md`. Same marker-based idempotency. |
 | `.opencode/instructions.md` | Same as `CLAUDE.md`, for OpenCode. |
 | `.mcp.json` | JSON-merged. Adds a `rubocop` entry under `mcpServers`. Skipped if `rubocop` is already registered. |
+| `.codex/config.toml` | TOML-merged. Adds a `[mcp_servers.rubocop]` block. Existing comments and key ordering survive - the new block is appended verbatim, not re-serialized. Skipped if `rubocop` is already registered. **Requires Codex CLI ≥ 0.78.0 and `codex trust .codex/`.** |
 | `opencode.json` | JSON-merged. Adds a `rubocop` entry under `mcp`. Skipped if already registered. |
-| Codex MCP (`~/.codex/config.toml`) | **Not auto-edited.** The generator prints the TOML snippet for you to paste. The MCP config is user-level, not project-level, and I do not want to touch your home directory silently. |
 | `bin/rubocop-edited` | Shim that delegates to `bundle exec railsdx-check rubocop-edited`. Runs `rubocop -A` on the single file the agent just edited. Exit 0 = clean / autocorrected / not a Ruby file. Exit 2 + offense report on stderr = remaining offenses. |
 | `bin/rubocop-changed` | Shim that delegates to `bundle exec railsdx-check rubocop-changed`. Runs RuboCop on every Ruby file modified in the working tree (tracked diffs, staged, untracked). Exit 0 = clean / nothing changed. Exit 2 + offense report on stderr = blocked. |
 | `.claude/settings.json` | JSON-merged. Adds a `PostToolUse` hook (`Edit|Write|MultiEdit` → `bin/rubocop-edited`) **and** a `Stop` hook (→ `bin/rubocop-changed`). **Both blocking** - exit 2 re-enters the turn with the offense report. Preserves your other hooks and top-level keys; skipped per-hook if already wired. |
-| `.codex/hooks.json` | JSON-merged. Same two hooks, same blocking behavior. Codex copied Claude's protocol so one merger drives both. **First-run gotcha:** see [Codex trust step](#codex-trust-step-required-for-codex-hooks). |
+| `.codex/hooks.json` | JSON-merged. Same two hooks, same blocking behavior. Codex copied Claude's protocol so one merger drives both. **First-run gotcha:** see [Codex trust step](#codex-trust-step-required). |
 | `.opencode/plugins/rubocop-edited.js` | Bun-shell plugin that runs `bin/rubocop-edited` on `file.edited`. **Observation only** - OpenCode plugins cannot feed text back to the model, so remaining offenses are printed to the console. |
 | `.opencode/plugins/rubocop-changed.js` | Bun-shell plugin that runs `bin/rubocop-changed` on `session.idle`. Same observation-only caveat. |
 
@@ -61,11 +68,11 @@ The generator writes a small number of files and tries hard not to clobber anyth
 
 ```bash
 bin/rails generate railsdx:install --skip-claude            # no .mcp.json, CLAUDE.md, .claude/settings.json
-bin/rails generate railsdx:install --skip-codex             # no Codex MCP snippet, no .codex/hooks.json
+bin/rails generate railsdx:install --skip-codex             # no .codex/config.toml, .codex/hooks.json
 bin/rails generate railsdx:install --skip-opencode          # no opencode.json, instructions, or plugins
 bin/rails generate railsdx:install --skip-stop-hook         # no bin/rubocop-changed and no Stop-hook configs
 bin/rails generate railsdx:install --skip-rubocop-edited    # no bin/rubocop-edited and no PostToolUse configs
-bin/rails generate railsdx:install --with-rubydex           # also wire rubydex (see docs/rubydex.md)
+bin/rails generate railsdx:install --with-rubydex           # also wire rubydex MCP locally (see docs/rubydex.md)
 ```
 
 The skip flags compose: `--skip-claude --skip-codex` leaves only the OpenCode-side files; `--skip-stop-hook --skip-rubocop-edited` keeps the MCP setup but drops every safety-net artifact.
@@ -135,9 +142,9 @@ RAILSDX_RUBOCOP_SERVER=1 bin/rubocop-changed    # force --server
 RAILSDX_RUBOCOP_SERVER=0 bin/rubocop-changed    # never use --server
 ```
 
-## Codex trust step (required for Codex hooks)
+## Codex trust step (required)
 
-Codex CLI refuses to run scripts under `.codex/` until you trust the directory in this repo. Without this, the `Stop` and `PostToolUse` hooks `railsdx` writes will silently do nothing - which is the worst possible failure mode for a safety net.
+Codex CLI refuses to load project-local `.codex/config.toml` AND refuses to run scripts under `.codex/` until you trust the directory in this repo. Without trust, both the MCP server registration and the hooks will silently do nothing - the worst possible failure mode for a safety net.
 
 Run this once per project, after the generator finishes:
 
@@ -145,7 +152,7 @@ Run this once per project, after the generator finishes:
 codex trust .codex/
 ```
 
-The generator prints a reminder. Do not skip it.
+The generator prints a reminder. Do not skip it. Requires Codex CLI ≥ 0.78.0.
 
 ## Verifying the install
 
@@ -153,7 +160,9 @@ The generator prints a reminder. Do not skip it.
 bundle exec railsdx-check doctor
 ```
 
-The doctor reads `.claude/settings.json`, `.codex/hooks.json`, and `.opencode/plugins/` and reports per-check `✓` / `✗` against the expected wiring. It is read-only - it never modifies your config. Exit 0 means every expected hook is in place; exit 1 means something is missing. Re-run the install generator to fix gaps.
+The doctor reads `.mcp.json`, `.codex/config.toml`, `opencode.json`, `.claude/settings.json`, `.codex/hooks.json`, and `.opencode/plugins/` and reports per-check `✓` / `✗` for both **MCP servers** and **hooks**. It is read-only - it never modifies your config. Exit 0 means every expected wiring is in place; exit 1 means something is missing. Re-run the install generator to fix gaps.
+
+Rubydex MCP is treated as optional: the doctor only verifies it when at least one agent already has it registered (i.e., you installed with `--with-rubydex`).
 
 ## Uninstall
 
@@ -164,31 +173,31 @@ There is no `--revert` flag yet. Here is the manual procedure - the gem only wri
    - `CLAUDE.md`
    - `.opencode/instructions.md`
 
-2. **JSON-merged entries.** Remove the `rubocop` key from:
+2. **JSON-merged entries.** Remove the `rubocop` (and `rubydex`, if present) key from:
    - `.mcp.json` under `mcpServers`
    - `opencode.json` under `mcp`
    - `.claude/settings.json` - delete any `hooks` group whose command is `bin/rubocop-changed` or `bin/rubocop-edited`
    - `.codex/hooks.json` - same as `.claude/settings.json`
 
-3. **Standalone files.** Delete:
+3. **TOML-merged entries.** Remove the `[mcp_servers.rubocop]` (and `[mcp_servers.rubydex]`, if present) block from `.codex/config.toml`.
+
+4. **Standalone files.** Delete:
    - `bin/rubocop-changed`
    - `bin/rubocop-edited`
    - `.opencode/plugins/rubocop-changed.js`
    - `.opencode/plugins/rubocop-edited.js`
 
-4. **State directory.** Delete `.railsdx/` if it exists (the doctor and checks drop a small JSON state file here).
-
-5. **Codex MCP entry.** If you pasted the snippet into `~/.codex/config.toml`, remove the `[mcp_servers.rubocop]` block.
+5. **State directory.** Delete `.railsdx/` if it exists (the doctor and checks drop a small JSON state file here).
 
 Then `bundle remove railsdx` from the Gemfile.
 
 ## Rubydex (opt-in, experimental)
 
-`--with-rubydex` wires the [rubydex](https://github.com/shopify/rubydex) semantic-index MCP server. It is a separate story - structural search across Ruby code, user-scope registration, Rust binary prerequisite. The full instructions live in [docs/rubydex.md](docs/rubydex.md) so they do not crowd the main README.
+`--with-rubydex` also wires the [rubydex](https://github.com/shopify/rubydex) semantic-index MCP server locally in each agent's MCP config. It is a separate story - structural search across Ruby code, Rust binary prerequisite, experimental upstream surface. The full instructions live in [docs/rubydex.md](docs/rubydex.md) so they do not crowd the main README.
 
 ## Where this is going
 
-The name `railsdx` is broader than the v0 surface on purpose. RuboCop is the first thing every Rails-and-AI workflow needs, so it shipped first. The shape it established - generator drops config, optional safety-net hooks, host owns the underlying gem - is the shape future tools will follow.
+The name `railsdx` is broader than the v0 surface on purpose. RuboCop is the first thing every Rails-and-AI workflow needs, so it shipped first. The shape it established - per-agent generator, JSON/TOML merging, local-only writes, host owns the underlying gem - is the shape future tools will follow.
 
 On the roadmap:
 
@@ -196,8 +205,9 @@ On the roadmap:
 - **Tests-changed safety net** - "if you touched a file under `app/`, you must have also touched a test." Optional, off by default.
 - **Migration safety check** - opinionated guardrails for `db/migrate/*.rb` (no `change_column_null` without backfill, etc.).
 - **Per-stack starter packs** - Hotwire, ViewComponent, Sidekiq - each contributing its own AGENTS.md section and (where it makes sense) its own MCP wiring.
+- **User-scope companion command** - a separate `railsdx:setup-global` for the things that genuinely belong at user scope (cross-project MCP servers, shared agent settings). Strictly opt-in. Out of scope for v0.
 
-Each addition follows the same contract: a `Railsdx::Checks::Base` subclass, an entry in the generator, a row in the doctor's expected-hooks list. See [docs/extending.md](docs/extending.md) for the contract.
+Each addition follows the same contract: a `Railsdx::Checks::Base` subclass, an entry in the generator, a row in the doctor's expected-wiring list. See [docs/extending.md](docs/extending.md) for the contract.
 
 ## Development
 

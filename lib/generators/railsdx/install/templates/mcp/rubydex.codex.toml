@@ -1,7 +1,3 @@
-# Add to ~/.codex/config.toml (user-level config). Rubydex is registered at
-# user scope on purpose: the rubydex_mcp binary inherits the shell's CWD, so
-# one entry indexes whatever project you launch Codex from.
-
 [mcp_servers.rubydex]
 command = "${HOME}/.cargo/bin/rubydex_mcp"
 args = []

@@ -8,10 +8,11 @@ Gem::Specification.new do |spec|
   spec.authors = ["Lucian Ghinda"]
   spec.email = ["lucianghinda@users.noreply.github.com"]
 
-  spec.summary = "Wire the RuboCop MCP server into Claude Code, Codex, and OpenCode."
-  spec.description = "A Rails generator that drops MCP server configuration and agent " \
-                     "instructions so AI coding assistants use RuboCop's built-in MCP " \
-                     "server (rubocop --mcp) as their lint and autocorrect tool."
+  spec.summary = "Local agent-config generator for Claude Code, Codex CLI, and OpenCode."
+  spec.description = "A Rails generator that writes per-agent configuration entirely " \
+                     "inside your project folder so Claude Code, Codex CLI, and OpenCode " \
+                     "share the same RuboCop workflow. RuboCop is the v0 payload; the " \
+                     "generator never touches files outside the project root."
   spec.homepage = "https://github.com/lucianghinda/railsdx"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.3.0"
@@ -33,4 +34,9 @@ Gem::Specification.new do |spec|
   # Thor powers exe/railsdx-check's subcommand dispatch. It's already a
   # transitive dep of railties; declaring it explicitly pins the contract.
   spec.add_dependency "thor", ">= 1.0"
+
+  # toml-rb reads and writes Codex CLI's project-local .codex/config.toml.
+  # Codex stores MCP servers as TOML; the generator merges into existing
+  # files idempotently, which needs a real parser.
+  spec.add_dependency "toml-rb", "~> 4.0"
 end

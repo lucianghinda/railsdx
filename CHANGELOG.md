@@ -1,25 +1,55 @@
 ## [Unreleased]
 
-### Added
+## [0.1.0] - 2026-06-04
 
-- `rubocop-server` auto-detect in both `bin/rubocop-changed` and `bin/rubocop-edited`. When the daemon is up (`bundle exec rubocop --start-server`) the hooks pass `--server` automatically, skipping rubocop's ~1-2s cold start that compounds across every PostToolUse fire. Override with `RAILSDX_RUBOCOP_SERVER=1` (force) or `=0` (never). Lives on `Checks::Base` via the new `Railsdx::Checks::RubocopServer` module so every future check that shells out to rubocop inherits it.
-- Codex trust step surfaced as a numbered next-step in the generator's "Done. Next:" output, highlighted as **REQUIRED for Codex hooks**. Without `codex trust .codex/` the railsdx Stop / PostToolUse hooks silently no-op — surfacing it inline prevents the worst failure mode for a safety net.
-- `docs/rubydex.md` — full rubydex install + usage doc lifted out of the main README so the README stays focused on the v0 RuboCop surface.
-- `docs/extending.md` — public contract for writing a new check. Documents the four touchpoints (check class, autoload, CLI dispatcher, doctor row), the helpers `Checks::Base` exposes, and the design reasoning behind explicit-over-reflection registration.
-- README rewrite covering both halves of the safety net (PostToolUse `bin/rubocop-edited` was previously undocumented), an "Uninstall" section with the manual procedure, and a "Where this is going" roadmap paragraph framing railsdx as an umbrella for Rails-AI DX (RuboCop is just first).
+### Initial release
 
-- `--with-rubydex` opt-in flag wires the [rubydex](https://github.com/shopify/rubydex) semantic-index MCP server. **Experimental** — upstream rubydex labels its MCP server experimental and is iterating; watch the repo, expect drift. Registers at **user scope** (rubydex inherits CWD, so one entry covers every project) — prints `claude mcp add --scope user` for Claude Code, plus TOML/JSON snippets for `~/.codex/config.toml` and `~/.config/opencode/opencode.json`. Adds a rubydex section to `AGENTS.md` documenting when to prefer rubydex over `Grep`. Honors `--skip-claude/codex/opencode`. Warns if `${HOME}/.cargo/bin/rubydex_mcp` isn't installed.
-- `Railsdx::Checks` framework + `bin/railsdx-check` Thor executable. Each hook subclasses `Checks::Base` and is dispatched via `bundle exec railsdx-check <name>`. State recorded at `.railsdx/last-check.json`.
-- Post-turn safety net: `bin/rubocop-changed` script that lints every `.rb` file modified in the working tree and exits non-zero with offenses on stderr.
-- Per-edit autocorrect (R1): `bin/rubocop-edited` runs `rubocop -A` on whichever file the agent just edited via PostToolUse hooks. Reads `tool_input.file_path` from stdin JSON, exits 2 only when un-autocorrectable offenses remain.
-- Hook configs across three agents:
-  - `.claude/settings.json` (Claude Code) — blocking PostToolUse + Stop
-  - `.codex/hooks.json` (Codex CLI) — blocking PostToolUse + Stop, requires trusting `.codex/` once
-  - `.opencode/plugins/rubocop-changed.js` + `.opencode/plugins/rubocop-edited.js` (OpenCode) — observation only (`session.idle` / `file.edited`)
-- `railsdx-check doctor` subcommand: read-only inspection that reports per-check ✓/✗ across the three agent configs. Exits 0 when wired correctly, 1 otherwise. Recommended after running the install generator.
-- `--skip-stop-hook` opts out of the Stop-event safety net only; `--skip-rubocop-edited` opts out of the PostToolUse autocorrect only. `--skip-claude`, `--skip-codex`, `--skip-opencode` suppress the corresponding agent's hook config.
-- AGENTS.md documents both checks alongside the MCP workflow.
+A Rails generator that writes per-agent configuration entirely inside your project folder so Claude Code, Codex CLI, and OpenCode share the same RuboCop workflow.
 
-## [0.1.0] - 2026-05-21
+**Strictly local.** Every file the generator touches lives under `Rails.root`. Nothing is written to `~/.codex/`, `~/.claude.json`, or any other user-level location. Global agent state is out of scope for this release.
 
-- Initial release
+### Files written
+
+Per agent, all under the project root:
+
+- **Claude Code** — `CLAUDE.md` (stub pointing to `AGENTS.md`), `.mcp.json` (registers the `rubocop` MCP server), `.claude/settings.json` (PostToolUse + Stop hooks).
+- **Codex CLI** — `.codex/config.toml` (registers the `rubocop` MCP server locally; requires Codex CLI ≥ 0.78.0 and `codex trust .codex/`), `.codex/hooks.json` (same PostToolUse + Stop hooks as Claude).
+- **OpenCode** — `.opencode/instructions.md`, `opencode.json` (registers the `rubocop` MCP server), `.opencode/plugins/rubocop-changed.js` + `.opencode/plugins/rubocop-edited.js`.
+- **Shared** — `AGENTS.md` (cross-agent RuboCop rules), `bin/rubocop-changed`, `bin/rubocop-edited` (Ruby shims that delegate to `railsdx-check`).
+
+### MCP wiring
+
+RuboCop 1.85+ ships an MCP server (`bundle exec rubocop --mcp`) exposing `rubocop_inspection` and `rubocop_autocorrection` as structured tools. The generator registers it in each agent's project-local MCP config, and `AGENTS.md` tells the agent to call those tools before declaring a task done.
+
+### Safety-net hooks
+
+Two RuboCop hooks fire regardless of whether the agent remembered to call the MCP tools:
+
+- **`bin/rubocop-edited`** runs `rubocop -A` on every file the agent edits (Claude/Codex `PostToolUse`, OpenCode `file.edited`). Style fixes land silently; only un-autocorrectable offenses block the turn with exit 2 + report.
+- **`bin/rubocop-changed`** lints every Ruby file modified in the working tree at turn-end (Claude/Codex `Stop`, OpenCode `session.idle`). Exit 2 re-enters the turn with the offense report so the agent can't declare done while RuboCop is unhappy.
+
+`rubocop-server` auto-detect — when the daemon is up (`bundle exec rubocop --start-server`) the hooks pass `--server` automatically, skipping rubocop's ~1-2s cold start. Override with `RAILSDX_RUBOCOP_SERVER=1` (force) or `=0` (never).
+
+### Skip flags
+
+- `--skip-claude` / `--skip-codex` / `--skip-opencode` — drop every file for the named agent.
+- `--skip-stop-hook` — drop the Stop-event safety net (no `bin/rubocop-changed`, no Stop hook entries).
+- `--skip-rubocop-edited` — drop the PostToolUse autocorrect (no `bin/rubocop-edited`, no PostToolUse entries).
+
+### Rubydex (opt-in, experimental)
+
+`--with-rubydex` also registers the [rubydex](https://github.com/shopify/rubydex) semantic-index MCP server in each agent's local MCP config and adds a rubydex section to `AGENTS.md` documenting when to prefer rubydex over `Grep`. Upstream rubydex labels its MCP server experimental and iterates fast — expect drift. Honors `--skip-claude/codex/opencode`. Warns if `${HOME}/.cargo/bin/rubydex_mcp` isn't installed.
+
+### Verification
+
+`bundle exec railsdx-check doctor` reads `.mcp.json`, `.codex/config.toml`, `opencode.json`, `.claude/settings.json`, `.codex/hooks.json`, and `.opencode/plugins/` and reports per-check ✓ / ✗ for both MCP servers and hooks. Exits 0 when wired correctly. Rubydex MCP is treated as optional — only verified when at least one agent already has it registered.
+
+### Idempotency
+
+- Marker-delimited sections (`<!-- railsdx:start -->` / `<!-- railsdx:end -->`) in `AGENTS.md`, `CLAUDE.md`, and `.opencode/instructions.md` — re-running the generator replaces just the railsdx block.
+- JSON merging in `.mcp.json`, `opencode.json`, `.claude/settings.json`, `.codex/hooks.json` — existing keys preserved; railsdx entries appended only when not already present.
+- TOML merging in `.codex/config.toml` — the existing file is parsed for the presence check, then the template block is appended verbatim so any comments or key ordering in the user's file survive.
+
+### Codex trust
+
+Codex ignores both project-local `config.toml` AND `.codex/` hook scripts until the project is trusted. The generator prints a highlighted reminder: `codex trust .codex/`. Without it, both MCP server registration and hooks silently no-op.

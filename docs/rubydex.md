@@ -6,7 +6,7 @@ I had to learn this the hard way: when an AI agent reasons about a Ruby codebase
 
 [Rubydex](https://github.com/shopify/rubydex) is a semantic Ruby indexer that builds a resolved, ancestry-aware index of the codebase. It exposes that index over MCP. For structural questions about Ruby code - "where is this defined?", "what inherits from this?", "who references this constant?" - it is strictly better than text search.
 
-`railsdx --with-rubydex` wires it into your AI assistants without you having to write any of the registration files by hand.
+`railsdx --with-rubydex` wires it into your AI assistants' **project-local** MCP configs without you having to write any of the registration files by hand.
 
 ## The tools rubydex exposes
 
@@ -35,19 +35,22 @@ Two reasons. Both matter.
 
 1. **The MCP server is a Rust binary.** You install it with `cargo install --path rust/rubydex-mcp` from a clone of `shopify/rubydex`. Not every teammate has a Rust toolchain.
 
-2. **The launch command takes no path argument.** `rubydex_mcp` indexes whichever directory it is launched in. That makes **user scope** the right registration: one entry in `~/.claude.json` / `~/.codex/config.toml` / `~/.config/opencode/opencode.json` covers every Ruby project you `cd` into, with nothing committed to any repo.
+2. **The integration is genuinely experimental.** Upstream rubydex's MCP surface is still moving. Pinning a project to it today means committing a registration that may need rewriting next month.
 
-Project-scope registration would lock the binary path into the repo, which is the wrong tradeoff for a binary that you may or may not have installed yet.
+Project-local registration is the right shape for this gem: every other file `railsdx` writes lives under `Rails.root`, and rubydex now follows the same rule. If you would rather register rubydex at user scope (one entry covers every project), that is a perfectly reasonable choice - just do it by hand in `~/.claude.json` / `~/.codex/config.toml` / `~/.config/opencode/opencode.json` and skip `--with-rubydex`.
 
 ## What `--with-rubydex` does
 
-Three things, none of them silent.
+Four things:
 
 1. Adds a "Rubydex via MCP" section to `AGENTS.md` documenting the tools and when to prefer them over `Grep`.
-2. Prints the exact `claude mcp add --scope user rubydex …` command for Claude Code.
-3. Prints copy-paste TOML/JSON snippets for the Codex and OpenCode user-level config files. **No home-directory files are auto-edited.**
+2. Merges a `rubydex` entry into `.mcp.json` for Claude Code.
+3. Merges a `[mcp_servers.rubydex]` block into `.codex/config.toml` for Codex CLI.
+4. Merges a `rubydex` entry into `opencode.json` for OpenCode.
 
-It honors `--skip-claude` / `--skip-codex` / `--skip-opencode`: e.g. `--with-rubydex --skip-opencode` skips the OpenCode snippet.
+It honors `--skip-claude` / `--skip-codex` / `--skip-opencode`: e.g. `--with-rubydex --skip-opencode` wires rubydex in Claude and Codex but leaves `opencode.json` alone.
+
+Each registration uses `${HOME}/.cargo/bin/rubydex_mcp` as the command path. The agents that read these configs are responsible for expanding the variable; if your binary lives elsewhere you will need to edit the registered command after install.
 
 ## Prerequisite: install the binary
 
@@ -57,7 +60,7 @@ cd rubydex
 cargo install --path rust/rubydex-mcp
 ```
 
-The generator looks for the binary at `${HOME}/.cargo/bin/rubydex_mcp` and warns you if it is missing. If you have it in another location, you will have to edit the printed snippets before pasting.
+The generator looks for the binary at `${HOME}/.cargo/bin/rubydex_mcp` and warns you if it is missing.
 
 ## Running the generator
 
@@ -65,9 +68,9 @@ The generator looks for the binary at `${HOME}/.cargo/bin/rubydex_mcp` and warns
 bin/rails generate railsdx:install --with-rubydex
 ```
 
-Then follow the printed instructions for each assistant. For Claude Code that is a single `claude mcp add` command; for Codex and OpenCode you paste a small block into the user-level config file.
+Restart the assistant after install and the rubydex tools (`mcp__rubydex__*`) should appear in its tool list.
 
-After that, restart the assistant and the rubydex tools (`mcp__rubydex__*`) should appear in its tool list.
+For Codex CLI specifically: the local MCP server registration is gated on project trust. If you have not yet run `codex trust .codex/` in this repo, do it now - otherwise Codex will silently skip the rubydex entry along with everything else under `.codex/`.
 
 ## If rubydex is unavailable
 

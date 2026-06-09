@@ -5,6 +5,7 @@ require "fileutils"
 require "json"
 require "stringio"
 require "tmpdir"
+require "toml-rb"
 
 module Railsdx
   module Checks
@@ -97,6 +98,64 @@ module Railsdx
         end
       end
 
+      # --- MCP verification -----------------------------------------------------
+
+      def test_rubocop_mcp_present_in_all_three_agents
+        Dir.mktmpdir do |dir|
+          Dir.chdir(dir) do
+            write_claude_mcp_with_rubocop
+            write_codex_config_with_rubocop
+            write_opencode_with_rubocop
+            assert_equal 0, @doctor.call([])
+            assert_includes @stdout.string, "✓ MCP server rubocop → .mcp.json"
+            assert_includes @stdout.string, "✓ MCP server rubocop → .codex/config.toml"
+            assert_includes @stdout.string, "✓ MCP server rubocop → opencode.json"
+          end
+        end
+      end
+
+      def test_rubocop_mcp_missing_reports_failure
+        Dir.mktmpdir do |dir|
+          Dir.chdir(dir) do
+            File.write(".mcp.json", JSON.pretty_generate({ "mcpServers" => { "other" => { "command" => "x" } } }))
+            assert_equal 1, @doctor.call([])
+            assert_includes @stdout.string, "✗ MCP server rubocop missing from .mcp.json"
+          end
+        end
+      end
+
+      def test_rubydex_omitted_when_not_installed_anywhere
+        Dir.mktmpdir do |dir|
+          Dir.chdir(dir) do
+            write_claude_mcp_with_rubocop
+            @doctor.call([])
+            refute_includes @stdout.string, "rubydex"
+          end
+        end
+      end
+
+      def test_rubydex_verified_when_present_in_any_agent
+        Dir.mktmpdir do |dir|
+          Dir.chdir(dir) do
+            write_claude_mcp_with_rubocop_and_rubydex
+            write_codex_config_with_rubocop # rubydex missing from codex
+            assert_equal 1, @doctor.call([])
+            assert_includes @stdout.string, "✓ MCP server rubydex → .mcp.json"
+            assert_includes @stdout.string, "✗ MCP server rubydex missing from .codex/config.toml"
+          end
+        end
+      end
+
+      def test_codex_config_toml_with_rubocop_passes
+        Dir.mktmpdir do |dir|
+          Dir.chdir(dir) do
+            write_codex_config_with_rubocop
+            assert_equal 0, @doctor.call([])
+            assert_includes @stdout.string, "✓ MCP server rubocop → .codex/config.toml"
+          end
+        end
+      end
+
       private
 
       def write_claude_stop_hook(command)
@@ -145,6 +204,44 @@ module Railsdx
         FileUtils.mkdir_p(".opencode/plugins")
         File.write(".opencode/plugins/rubocop-changed.js", "// installed by railsdx\n")
         File.write(".opencode/plugins/rubocop-edited.js",  "// installed by railsdx\n")
+      end
+
+      def rubocop_mcp_command
+        { "command" => "bundle", "args" => %w[exec rubocop --mcp] }
+      end
+
+      def write_claude_mcp_with_rubocop
+        File.write(".mcp.json", JSON.pretty_generate(
+                                  "mcpServers" => { "rubocop" => rubocop_mcp_command }
+                                ))
+      end
+
+      def write_claude_mcp_with_rubocop_and_rubydex
+        File.write(".mcp.json", JSON.pretty_generate(
+                                  "mcpServers" => {
+                                    "rubocop" => rubocop_mcp_command,
+                                    "rubydex" => { "command" => "${HOME}/.cargo/bin/rubydex_mcp" }
+                                  }
+                                ))
+      end
+
+      def write_codex_config_with_rubocop
+        FileUtils.mkdir_p(".codex")
+        File.write(".codex/config.toml", TomlRB.dump(
+                                           "mcp_servers" => { "rubocop" => rubocop_mcp_command }
+                                         ))
+      end
+
+      def write_opencode_with_rubocop
+        File.write("opencode.json", JSON.pretty_generate(
+                                      "mcp" => {
+                                        "rubocop" => {
+                                          "type" => "local",
+                                          "command" => %w[bundle exec rubocop --mcp],
+                                          "enabled" => true
+                                        }
+                                      }
+                                    ))
       end
     end
   end
